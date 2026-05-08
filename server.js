@@ -19,41 +19,72 @@ app.use((req, res, next) => {
 const API_KEY = process.env.GEMINI_API_KEY;
 
 app.post("/analyze", async (req, res) => {
-    console.log(req.body)
-    const { transcript } = req.body;
-    console.log(req.body)
+    const { parts } = req.body;
+
+    if (!parts || Object.keys(parts).length === 0) {
+        return res.status(400).json({ error: "Nav datu analīzei" });
+    }
 
     try {
+
         const response = await fetch(
             `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
             {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     contents: [
                         {
                             parts: [
                                 {
                                     text: `
-Tu esi stingrs un objektīvs IT studiju noslēguma darbu eksaminācijas komisijas loceklis.
-Tavs uzdevums ir kritiski novērtēt studenta prezentācijas tekstu.
+Tu esi stingrs, bet taisnīgs komisijas loceklis.
 
-STRIKTIE NOTEIKUMI:
-1. Ja teksts ir bezjēdzīgs, satur tikai nejaušus burtus (piemēram, "asdf", "sdfsdf"), sastāv no nesaistītiem vārdiem vai ir pārāk īss, lai veiktu analīzi – SCORE IR OBLIGĀTI 0.
-2. Vērtē tikai pēc būtības: struktūra, argumentācija, loģiskums.
-3. Neizdomā studenta vietā to, kā tur nav.
+Tev ir vairākas prezentācijas daļas. Novērtē KATRU atsevišķi.
 
-ATBILDES FORMĀTS (TIKAI ŠĀDS):
-SCORE: <skaitlis no 0 līdz 100>
-ATGRIEZENISKĀ SAITE:
-- <1. ieteikums vai iemesls, kāpēc 0>
-- <2. ieteikums vai iemesls>
-- <3. ieteikums vai iemesls>
+SVARĪGI:
+Teksts var būt iegūts no balss atpazīšanas, tāpēc:
+- var nebūt pieturzīmes
+- var būt gramatikas kļūdas
+- var būt nepareizi atpazīti vārdi
 
-PREZENTĀCIJAS TEKSTS:
-"${transcript}"
+PIRMS vērtēšanas:
+mentāli "sakārto" tekstu:
+- izlabo gramatiku
+- pievieno pieturzīmes
+- interpretē domu, NEVIS sodi par formu
+
+NOTEIKUMI:
+- Ja tekstā IR doma → vērtē saturu, pat ja forma ir slikta
+- Ja teksts tiešām ir bezjēdzīgs → score = 0
+- NESODI par pareizrakstību vai pieturzīmēm
+- SODI tikai par:
+  - loģikas trūkumu
+  - argumentācijas trūkumu
+  - tukšu saturu ("ūdeni")
+
+NOVĒRTĒ:
+1. Skaidrību (vai doma ir saprotama)
+2. Loģiku (vai ir secība)
+3. Argumentāciju (vai ir pamatojums)
+4. "Ūdens" daudzumu
+
+ATBILDES FORMĀTS (TIKAI JSON, BEZ PAPILDUS TEKSTA):
+{
+  "parts": {
+    "Ievads": {
+      "score": 0-10,
+      "fillerLevel": "zems|vidējs|augsts",
+      "feedback": [
+        "konkrēts ieteikums",
+        "konkrēts ieteikums"
+      ]
+    }
+  }
+}
+
+DATI:
+${JSON.stringify(parts)}
 `
                                 }
                             ]
@@ -63,87 +94,101 @@ PREZENTĀCIJAS TEKSTS:
             }
         );
 
-        // --- ŠEIT IR TĀ VIETA, KUR JĀIEVIETO PĀRBAUDE ---
         if (!response.ok) {
             const errorData = await response.json();
-            console.error("API Error:", errorData);
-            // Svarīgi: pārtraucam izpildi un nosūtām kļūdu klientam
-            return res.status(response.status).json({
-                questions: [], // Atgriežam tukšu masīvu, lai frontends nesalūztu
-                error: `API kļūda: ${response.status}`
+            console.error("API ERROR FULL:", JSON.stringify(errorData, null, 2));
+
+            return res.json({
+                parts: {},
+                totalScore: 0,
+                summary: "API kļūda (limits vai serveris)"
             });
         }
-        // ----------------------------------------------
 
         const data = await response.json();
 
-
-
-
-        console.log("--- Google API Full Response ---");
-        console.log(JSON.stringify(data, null, 2)); 
-        console.log("--------------------------------");
-
-
-
-        
         const text =
-            data.candidates?.[0]?.content?.parts?.[0]?.text ||
-            "Nav atbildes";
+            data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
 
+        let parsed;
 
-        console.log("--- AI RAW RESPONSE START ---");
-        console.log(text);
-        console.log("--- AI RAW RESPONSE END ---");
+        try {
 
+            const cleanedText = text
+                .replace(/```json/g, "")
+                .replace(/```/g, "")
+                .trim();
 
-    const scoreMatch = text.match(/SCORE:\s*(\d+)/i);
-    let score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
+            parsed = JSON.parse(cleanedText);
 
-    score = Math.max(0, Math.min(100, score));
+        } catch (e) {
+            console.error("JSON parse error:", text);
 
+            parsed = { parts: {} };
+        }
 
+        let results = parsed.parts || {};
+        let totalScore = 0;
 
+        for (let partName in parts) {
+            if (!results[partName]) {
+                results[partName] = {
+                    score: 0,
+                    fillerLevel: "-",
+                    feedback: ["Nav datu (AI kļūda)"]
+                };
+            }
 
-    const feedbackSection = text.split(/ATGRIEZENISKĀ SAITE:|IETEIKUMI:/i)[1];
+            totalScore += results[partName].score || 0;
+        }
 
-    let feedback = [];
-    if (feedbackSection) {
-        
-        feedback = feedbackSection
-            .split('\n')
-            .map(line => line.replace(/^[-*•]\s*/, '').trim())
-            .filter(line => line.length > 5); 
-    }
+        const requiredParts = [
+            "Ievads",
+            "Metodoloģija",
+            "Rezultāti",
+            "Secinājumi"
+        ];
 
-    if (feedback.length === 0) {
-        feedback = ["Nav specifisku ieteikumu (pārbaudiet teksta saturu)"];
-    }
+        let missingParts = [];
 
-    res.json({
-        score,
-        feedback
-    });
-    
+        requiredParts.forEach(part => {
+            if (!parts[part]) {
+                totalScore -= 2;
+                missingParts.push(part);
+            }
+        });
 
+        totalScore = Math.max(0, totalScore);
+        let summary = "Vidēja prezentācija";
+
+        if (totalScore > Object.keys(parts).length * 8) {
+            summary = "Ļoti laba prezentācija";
+        } else if (totalScore < Object.keys(parts).length * 5) {
+            summary = "Vāja prezentācija";
+        }
+
+        if (missingParts.length > 0) {
+            summary += `. Trūkst svarīgas daļas: ${missingParts.join(", ")}`;
+        }
+
+        res.json({
+            parts: results,
+            totalScore,
+            summary
+        });
 
     } catch (e) {
         console.error(e);
 
         res.json({
-            score: 70,
-            feedback: [
-                "Fallback režīms",
-                "AI nav pieejams",
-                "Pārbaudi API atslēgu"
-            ]
+            parts: {},
+            totalScore: 0,
+            summary: "AI nav pieejams"
         });
     }
-
-    
 });
 
-
+///////////////////////////////////////////////////////////////////////////////////////////
 // argumentacijas uzdevums
 
 app.post("/generate-questions", async (req, res) => {
@@ -151,40 +196,82 @@ app.post("/generate-questions", async (req, res) => {
 
     try {
         const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${API_KEY}`, // Используем стабильную 2.0
+            `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${API_KEY}`, 
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     contents: [{
                         parts: [{
-                            text: `Tu esi bakalaura darba komisija. Izveido 6 jautājumus par šo darbu.
-                            Tēma: ${topic}, Struktūra: ${structure}, Teksts: ${transcript}.
-                            
-                            ATBILDI TIKAI TĪRĀ JSON FORMĀTĀ (bez markdown precizējumiem):
+                            text: `
+                            Tu esi bakalaura darba aizstāvēšanas komisija.
+
+                            Studentam ir prezentācija ar šādu tēmu:
+                            TĒMA: ${topic}
+
+                            Prezentācijas struktūra:
+                            ${structure}
+
+                            Prezentācijas saturs:
+                            ${transcript}
+
+                            Izveido 6 jautājumus studentam.
+
+                            NOTEIKUMI:
+
+                            1. EASY jautājumi:
+                            - drīkst būt vispārīgi;
+                            - var būt par:
+                            - mērķauditoriju,
+                            - darba aktualitāti,
+                            - motivāciju izvēlēties tēmu,
+                            - tehnoloģiju izvēli,
+                            - darba mērķi,
+                            - praktisko pielietojumu,
+                            - projekta ierobežojumiem;
+                            - tiem NAV obligāti jābūt ļoti specifiskiem par tēmu.
+
+                            2. MEDIUM jautājumi:
+                            - balstīti uz prezentācijas saturu;
+                            - prasa paskaidrot risinājumus, metodoloģiju vai rezultātus.
+
+                            3. HARD jautājumi:
+                            - sarežģīti komisijas jautājumi;
+                            - prasa argumentāciju, salīdzinājumus, tehnisku pamatojumu;
+                            - var ietvert kritiku vai sistēmas ierobežojumus.
+
+                            4. Jautājumiem jāizklausās dabiski un profesionāli,
+                            kā īstā bakalaura darba aizstāvēšanā.
+
+                            5. Neatkārto vienus un tos pašus jautājumus dažādos līmeņos.
+
+                            ATBILDI TIKAI TĪRĀ JSON FORMĀTĀ.
+                            BEZ markdown.
+                            BEZ paskaidrojumiem.
+
+                            FORMĀTS:
                             {
-                              "questions": [
+                            "questions": [
                                 {"level": "EASY", "text": "..."},
                                 {"level": "EASY", "text": "..."},
                                 {"level": "MEDIUM", "text": "..."},
                                 {"level": "MEDIUM", "text": "..."},
                                 {"level": "HARD", "text": "..."},
                                 {"level": "HARD", "text": "..."}
-                              ]
-                            }`
+                            ]
+                            }
+                            `
                         }]
                     }]
                 })
             }
         );
 
-        // --- ŠEIT IR TĀ VIETA, KUR JĀIEVIETO PĀRBAUDE ---
         if (!response.ok) {
             const errorData = await response.json();
             console.error("API Error:", errorData);
-            // Svarīgi: pārtraucam izpildi un nosūtām kļūdu klientam
             return res.status(response.status).json({
-                questions: [], // Atgriežam tukšu masīvu, lai frontends nesalūztu
+                questions: [],
                 error: `API kļūda: ${response.status}`
             });
         }
@@ -192,8 +279,6 @@ app.post("/generate-questions", async (req, res) => {
 
         const data = await response.json();
         const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-
-        // Более надежный поиск JSON внутри текста (ищет всё между первым { и последним })
         const jsonMatch = rawText.match(/\{[\s\S]*\}/);
         const cleanJson = jsonMatch ? jsonMatch[0] : "{}";
 
@@ -207,7 +292,6 @@ app.post("/generate-questions", async (req, res) => {
 
     } catch (e) {
         console.error(e);
-        // Резервный вариант, если ИИ упал
         res.json({
             questions: [
                 {level: "EASY", text: "Kas ir darba mērķis?"},
@@ -218,107 +302,120 @@ app.post("/generate-questions", async (req, res) => {
     }
 });
 
+app.post("/analyze-defense", async (req, res) => {
 
-// atbilzu analize
-
-app.post("/analyze-answer", async (req, res) => {
-    const { question, answer } = req.body;
+    const { answers } = req.body;
 
     try {
+
         const response = await fetch(
             `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
             {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json"
+                },
                 body: JSON.stringify({
-                    contents: [
-                        {
-                            parts: [
-                                {
-                                    text: `
-Novērtē studenta atbildi.
+                    contents: [{
+                        parts: [{
+                            text: `
+Tu esi bakalaura darba komisija.
 
-Jautājums: ${question}
-Atbilde: ${answer}
+Novērtē KATRU studenta atbildi.
 
-Dod:
-SCORE: 0-100
-FEEDBACK:
-- ...
-- ...
-- ...
+SVARĪGI:
+- nesodi pārāk stingri par gramatiku;
+- vērtē saturu un argumentāciju;
+- atbildes var būt īsas.
+
+KATRAM jautājumam dod:
+- score (0-100)
+- 2 īsus ieteikumus
+
+ATBILDI TIKAI JSON FORMĀTĀ.
+
+FORMĀTS:
+{
+  "results": [
+    {
+      "question": "...",
+      "score": 75,
+      "feedback": [
+        "...",
+        "..."
+      ]
+    }
+  ]
+}
+
+DATI:
+${JSON.stringify(answers)}
 `
-                                }
-                            ]
-                        }
-                    ]
+                        }]
+                    }]
                 })
             }
         );
 
-        // --- ŠEIT IR TĀ VIETA, KUR JĀIEVIETO PĀRBAUDE ---
         if (!response.ok) {
+
             const errorData = await response.json();
-            console.error("API Error:", errorData);
-            // Svarīgi: pārtraucam izpildi un nosūtām kļūdu klientam
-            return res.status(response.status).json({
-                questions: [], // Atgriežam tukšu masīvu, lai frontends nesalūztu
-                error: `API kļūda: ${response.status}`
+
+            console.error(errorData);
+
+            return res.json({
+                results: [],
+                totalScore: 0
             });
         }
-        // ----------------------------------------------
 
         const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-        // Регулярное выражение с флагом 'i' (независимо от регистра)
-        const scoreMatch = text.match(/SCORE:\s*(\d+)/i);
-        let score = scoreMatch ? parseInt(scoreMatch[1]) : 0; // По умолчанию 0, а не 70, чтобы видеть ошибку
+        const rawText =
+            data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
 
-        // Ищем фидбек более гибко
-        const feedbackParts = text.split(/FEEDBACK:|IETEIKUMI:/i)[1];
-        const feedback = feedbackParts 
-            ? feedbackParts.split('\n').map(l => l.replace(/^[-*•\s]+/, '').trim()).filter(l => l.length > 3)
-            : ["Nav atsauksmes"];
+        const cleanedText = rawText
+            .replace(/```json/g, "")
+            .replace(/```/g, "")
+            .trim();
 
-        res.json({ score: Math.min(100, score), feedback });
+        let parsed;
+
+        try {
+
+            parsed = JSON.parse(cleanedText);
+
+        } catch (e) {
+
+            console.error("JSON parse error:", cleanedText);
+
+            parsed = { results: [] };
+        }
+
+        let totalScore = 0;
+
+        parsed.results.forEach(r => {
+            totalScore += r.score || 0;
+        });
+
+        res.json({
+            results: parsed.results,
+            totalScore
+        });
 
     } catch (e) {
+
+        console.error(e);
+
         res.json({
-            score: 70,
-            feedback: ["Fallback režīms"]
+            results: [],
+            totalScore: 0
         });
     }
 });
-
-
-
-
-
-
-
-
-
-
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
-
-
-
-
-
-
-
-
-
-
-// app.listen(3000, () => {
-//     console.log("Server running on http://localhost:3000");
-// });
-
-
-// node server js
