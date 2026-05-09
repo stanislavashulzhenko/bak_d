@@ -190,13 +190,12 @@ ${JSON.stringify(parts)}
 
 ///////////////////////////////////////////////////////////////////////////////////////////
 // argumentacijas uzdevums
-
 app.post("/generate-questions", async (req, res) => {
     const { topic, structure, transcript } = req.body;
 
     try {
         const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${API_KEY}`, 
+            `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${API_KEY}`, // Используем стабильную 2.0
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -215,35 +214,61 @@ app.post("/generate-questions", async (req, res) => {
                             Prezentācijas saturs:
                             ${transcript}
 
-                            Izveido 6 jautājumus studentam.
+                            Izveido 6 DAŽĀDUS jautājumus studentam.
 
-                            NOTEIKUMI:
+                            SVARĪGI NOTEIKUMI:
 
-                            1. EASY jautājumi:
-                            - drīkst būt vispārīgi;
-                            - var būt par:
-                            - mērķauditoriju,
-                            - darba aktualitāti,
-                            - motivāciju izvēlēties tēmu,
-                            - tehnoloģiju izvēli,
-                            - darba mērķi,
-                            - praktisko pielietojumu,
-                            - projekta ierobežojumiem;
-                            - tiem NAV obligāti jābūt ļoti specifiskiem par tēmu.
+                            1. Katram jautājumam jābūt unikālam.
+                            Neatkārto līdzīgus jautājumus.
 
-                            2. MEDIUM jautājumi:
-                            - balstīti uz prezentācijas saturu;
-                            - prasa paskaidrot risinājumus, metodoloģiju vai rezultātus.
+                            2. Izvairies no klišejām un pārāk bieži izmantotiem jautājumiem:
+                            - "Kāpēc izvēlējāties šo tēmu?"
+                            - "Kas ir mērķauditorija?"
+                            - "Kāda ir darba aktualitāte?"
+                            - "Kāpēc izvēlējāties šīs tehnoloģijas?"
+                            - "Kādi ir sistēmas ierobežojumi?"
+                            Ja iespējams, izmanto oriģinālākus formulējumus.
 
-                            3. HARD jautājumi:
-                            - sarežģīti komisijas jautājumi;
-                            - prasa argumentāciju, salīdzinājumus, tehnisku pamatojumu;
-                            - var ietvert kritiku vai sistēmas ierobežojumus.
+                            3. Katru reizi ģenerē atšķirīgus jautājumus,
+                            pat ja tēma atkārtojas.
 
-                            4. Jautājumiem jāizklausās dabiski un profesionāli,
-                            kā īstā bakalaura darba aizstāvēšanā.
+                            4. EASY jautājumi:
+                            - vienkārši;
+                            - saistīti ar praktisko pielietojumu;
+                            - motivāciju;
+                            - projekta ideju;
+                            - lietotājiem;
+                            - darba nozīmi.
 
-                            5. Neatkārto vienus un tos pašus jautājumus dažādos līmeņos.
+                            5. MEDIUM jautājumi:
+                            - par metodoloģiju;
+                            - arhitektūru;
+                            - datiem;
+                            - algoritmiem;
+                            - sistēmas darbību;
+                            - eksperimentiem;
+                            - testēšanu;
+                            - rezultātu interpretāciju.
+
+                            6. HARD jautājumi:
+                            - kritiski;
+                            - analītiski;
+                            - salīdzinoši;
+                            - par drošību;
+                            - veiktspēju;
+                            - mērogojamību;
+                            - alternatīviem risinājumiem;
+                            - ierobežojumiem;
+                            - iespējamām kļūdām;
+                            - zinātnisko pamatojumu.
+
+                            7. Jautājumiem jāizklausās kā īstai komisijai:
+                            - profesionāli;
+                            - dabiski;
+                            - dažādi pēc stila.
+
+                            8. EASY jautājumiem jābūt īsākiem,
+                            sarežģitiem - detalizētākiem.
 
                             ATBILDI TIKAI TĪRĀ JSON FORMĀTĀ.
                             BEZ markdown.
